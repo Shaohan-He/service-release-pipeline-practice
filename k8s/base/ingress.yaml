@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: release-demo-service
+  labels:
+    app: release-demo-service
+    component: api
+spec:
+  rules:
+    - host: release-demo.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: release-demo-service
+                port:
+                  number: 80

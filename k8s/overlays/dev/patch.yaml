@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: release-demo-service
+spec:
+  replicas: 1
+  template:
+    spec:
+      containers:
+        - name: app
+          env:
+            - name: APP_ENV
+              value: dev
+            - name: APP_VERSION
+              value: v1.0.0
+            - name: GIT_SHA
+              value: local
+            - name: IMAGE_TAG
+              value: dev-latest
+            - name: BUILD_TIME
+              value: local

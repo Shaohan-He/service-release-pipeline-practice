@@ -1,0 +1,95 @@
+name: Build and Scan Image
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag to build, for example v1.1.0"
+        required: false
+        default: "v1.0.0"
+
+permissions:
+  contents: read
+  packages: write
+  security-events: write
+
+jobs:
+  build-image:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve image metadata
+        id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          OWNER="${GITHUB_REPOSITORY_OWNER,,}"
+          IMAGE_NAME="ghcr.io/${OWNER}/release-demo-service"
+          SHORT_SHA="${GITHUB_SHA::7}"
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION_TAG="${GITHUB_REF_NAME}"
+          else
+            VERSION_TAG="${{ inputs.version || 'v1.0.0' }}"
+          fi
+          BUILD_TIME="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          {
+            echo "image_name=${IMAGE_NAME}"
+            echo "version_tag=${VERSION_TAG}"
+            echo "short_sha=${SHORT_SHA}"
+            echo "build_time=${BUILD_TIME}"
+          } >>"${GITHUB_OUTPUT}"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build image
+        run: |
+          bash scripts/build-image.sh \
+            "${{ steps.meta.outputs.image_name }}" \
+            "${{ steps.meta.outputs.version_tag }}" \
+            "${{ steps.meta.outputs.short_sha }}" \
+            "${{ steps.meta.outputs.version_tag }}"
+          docker tag \
+            "${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.version_tag }}" \
+            "${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.short_sha }}"
+
+      - name: Push image tags
+        run: |
+          docker push "${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.version_tag }}"
+          docker push "${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.short_sha }}"
+
+      - name: Trivy vulnerability scan
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.version_tag }}
+          format: sarif
+          output: trivy-results.sarif
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
+
+      - name: Upload Trivy SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+
+      - name: Print image summary
+        if: always()
+        run: |
+          echo "Image: ${{ steps.meta.outputs.image_name }}"
+          echo "Version tag: ${{ steps.meta.outputs.version_tag }}"
+          echo "Commit tag: ${{ steps.meta.outputs.short_sha }}"
+          docker buildx imagetools inspect "${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.version_tag }}" || true

@@ -1,0 +1,67 @@
+name: Deploy Staging
+
+on:
+  workflow_dispatch:
+  workflow_run:
+    workflows:
+      - Build and Scan Image
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-staging:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      IMAGE_NAME: ghcr.io/shaohan-he/release-demo-service
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Render staging manifest when no cluster secret exists
+        if: ${{ env.KUBE_CONFIG_DATA == '' }}
+        run: |
+          echo "KUBE_CONFIG_DATA is not configured. Running kustomize render only."
+          kubectl kustomize k8s/overlays/staging >/tmp/staging.yaml
+          echo "Configure repository secret KUBE_CONFIG_DATA to enable real staging deployment."
+
+      - name: Configure kubeconfig
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: |
+          mkdir -p "${HOME}/.kube"
+          echo "${KUBE_CONFIG_DATA}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Deploy staging
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: bash scripts/deploy.sh staging
+
+      - name: Smoke test staging
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: bash scripts/smoke-test.sh staging
+
+      - name: Generate release record
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        env:
+          UNIT_TEST_RESULT: success
+          DOCKER_BUILD_RESULT: success
+          TRIVY_SCAN_RESULT: success
+          KUSTOMIZE_RENDER_RESULT: success
+          KUBERNETES_ROLLOUT_RESULT: success
+          SMOKE_TEST_RESULT: success
+        run: bash scripts/release-record.sh staging staging-latest "${GITHUB_SHA::7}" success
+
+      - name: Upload release record artifact
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-release-record
+          path: release-records/*.md

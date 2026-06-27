@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test-build-render:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r app/requirements.txt
+
+      - name: Run pytest
+        working-directory: app
+        run: python -m pytest
+
+      - name: Docker build check
+        run: docker build -t release-demo-service:ci ./app
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Render dev overlay
+        run: kubectl kustomize k8s/overlays/dev >/tmp/dev.yaml
+
+      - name: Render staging overlay
+        run: kubectl kustomize k8s/overlays/staging >/tmp/staging.yaml
+
+      - name: Render production overlay
+        run: kubectl kustomize k8s/overlays/production >/tmp/production.yaml
+
+      - name: Render production canary overlay
+        run: kubectl kustomize k8s/overlays/production/canary >/tmp/production-canary.yaml

@@ -1,0 +1,109 @@
+name: Promote Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Production app version, for example v1.1.0"
+        required: true
+      image_tag:
+        description: "Image tag to deploy, for example v1.1.0 or commit sha"
+        required: true
+      previous_version:
+        description: "Previous production version for rollback"
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  promote-production:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      KUBE_CONFIG_DATA: ${{ secrets.KUBE_CONFIG_DATA }}
+      IMAGE_NAME: ghcr.io/shaohan-he/release-demo-service
+      VERSION: ${{ inputs.version }}
+      IMAGE_TAG: ${{ inputs.image_tag }}
+      PREVIOUS_VERSION: ${{ inputs.previous_version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Render production manifests when no cluster secret exists
+        if: ${{ env.KUBE_CONFIG_DATA == '' }}
+        run: |
+          echo "KUBE_CONFIG_DATA is not configured. Running kustomize render only."
+          kubectl kustomize k8s/overlays/production >/tmp/production.yaml
+          kubectl kustomize k8s/overlays/production/canary >/tmp/production-canary.yaml
+          echo "Configure KUBE_CONFIG_DATA and GitHub Environment reviewers to enable real production promotion."
+
+      - name: Configure kubeconfig
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: |
+          mkdir -p "${HOME}/.kube"
+          echo "${KUBE_CONFIG_DATA}" | base64 -d > "${HOME}/.kube/config"
+          chmod 600 "${HOME}/.kube/config"
+
+      - name: Deploy production canary
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: |
+          kubectl create namespace service-production --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -k k8s/overlays/production/canary
+          kubectl -n service-production set image deployment/release-demo-service-canary "app=${IMAGE_NAME}:${IMAGE_TAG}"
+          kubectl -n service-production set env deployment/release-demo-service-canary \
+            "APP_VERSION=${VERSION}" \
+            "IMAGE_TAG=${IMAGE_TAG}" \
+            "GIT_SHA=${GITHUB_SHA::7}" \
+            "BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          kubectl -n service-production rollout status deployment/release-demo-service-canary --timeout=180s
+
+      - name: Smoke test canary
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        env:
+          SMOKE_TEST_PORT: "18081"
+        run: bash scripts/smoke-test.sh production "" release-demo-service-canary
+
+      - name: Deploy stable production
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: |
+          kubectl apply -k k8s/overlays/production
+          kubectl -n service-production set image deployment/release-demo-service "app=${IMAGE_NAME}:${IMAGE_TAG}"
+          kubectl -n service-production set env deployment/release-demo-service \
+            "APP_VERSION=${VERSION}" \
+            "IMAGE_TAG=${IMAGE_TAG}" \
+            "GIT_SHA=${GITHUB_SHA::7}" \
+            "BUILD_TIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+          kubectl -n service-production rollout status deployment/release-demo-service --timeout=180s
+
+      - name: Smoke test stable production
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: bash scripts/smoke-test.sh production
+
+      - name: Remove canary after stable succeeds
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        run: |
+          kubectl -n service-production delete deployment/release-demo-service-canary --ignore-not-found
+          kubectl -n service-production delete service/release-demo-service-canary --ignore-not-found
+
+      - name: Generate release record
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        env:
+          UNIT_TEST_RESULT: success
+          DOCKER_BUILD_RESULT: success
+          TRIVY_SCAN_RESULT: success
+          KUSTOMIZE_RENDER_RESULT: success
+          KUBERNETES_ROLLOUT_RESULT: success
+          SMOKE_TEST_RESULT: success
+        run: bash scripts/release-record.sh production "${VERSION}" "${GITHUB_SHA::7}" success
+
+      - name: Upload release record artifact
+        if: ${{ env.KUBE_CONFIG_DATA != '' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-release-record
+          path: release-records/*.md

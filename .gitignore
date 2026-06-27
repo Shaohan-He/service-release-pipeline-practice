@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+.env
+.DS_Store
+release-records/*.md
+!release-records/README.md
+!release-records/example-v1.0.0-staging.md
+!release-records/.gitkeep
