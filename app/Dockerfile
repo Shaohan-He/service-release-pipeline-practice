@@ -17,7 +17,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt \
+RUN python -m pip install --no-cache-dir --upgrade pip==26.1.2 \
+    && python -m pip install --no-cache-dir -r requirements.txt \
     && adduser --disabled-password --gecos "" appuser
 
 COPY main.py .
