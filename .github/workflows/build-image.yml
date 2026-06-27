@@ -71,7 +71,7 @@ jobs:
           docker push "${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.short_sha }}"
 
       - name: Trivy vulnerability scan
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: ${{ steps.meta.outputs.image_name }}:${{ steps.meta.outputs.version_tag }}
           format: sarif
