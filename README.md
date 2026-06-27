@@ -86,7 +86,7 @@ rollback if needed
 cd service-release-pipeline-practice
 python -m venv .venv
 source .venv/bin/activate
-pip install -r app/requirements.txt
+pip install -r app/requirements-dev.txt
 cd app
 uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
@@ -120,7 +120,7 @@ docker run --rm -p 8000:8000 release-demo-service:local
 bash scripts/build-image.sh ghcr.io/shaohan-he/release-demo-service v1.0.0 local v1.0.0
 ```
 
-Dockerfile 使用 `python:3.12-slim`，只复制 `requirements.txt` 和 `main.py`，并使用非 root 用户运行服务。
+Dockerfile 使用 `python:3.12-slim`，只复制运行时 `requirements.txt` 和 `main.py`，测试依赖放在 `requirements-dev.txt`，镜像使用非 root 用户运行服务。
 
 ## Kubernetes 部署方式
 
